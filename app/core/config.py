@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     mongo_uri: SecretStr | None = None
     mongo_database: str = "filepulse"
     db_timeout_seconds: int = Field(default=3, ge=1, le=30)
+    api_base_url: str = "http://localhost:8000"
+    api_timeout_seconds: int = Field(default=30, ge=1, le=120)
 
     def require_databases(self) -> None:
         if not self.postgres_password or not self.postgres_password.get_secret_value():

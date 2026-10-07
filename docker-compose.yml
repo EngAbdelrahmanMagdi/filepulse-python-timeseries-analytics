@@ -36,8 +36,8 @@ services:
       - mongo_data:/data/db
     healthcheck:
       test: [CMD-SHELL, 'mongosh --quiet --eval "quit(db.adminCommand({ping:1}).ok ? 0 : 1)"']
-      interval: 3s
-      timeout: 3s
+      interval: 5s
+      timeout: 10s
       retries: 20
 
   collector:
@@ -78,6 +78,52 @@ services:
       - ./watched_data:/app/watched_data:ro
     depends_on:
       collector:
+        condition: service_started
+
+  api:
+    <<: *app
+    command: [uvicorn, app.api.server:app, --host, 0.0.0.0, --port, "8000", --workers, "1", --no-access-log]
+    environment:
+      WATCH_ROOT: /app/watched_data
+      POSTGRES_HOST: timescaledb
+      POSTGRES_DB: ${POSTGRES_DB:-filepulse}
+      POSTGRES_USER: ${POSTGRES_USER:-filepulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      MONGO_URI: mongodb://filepulse:${MONGO_PASSWORD:?Set MONGO_PASSWORD in .env}@mongodb:27017/?authSource=admin
+      MONGO_DATABASE: ${MONGO_DATABASE:-filepulse}
+      DB_TIMEOUT_SECONDS: ${DB_TIMEOUT_SECONDS:-3}
+      OBSERVER_MODE: ${OBSERVER_MODE:-polling}
+    volumes:
+      - ./watched_data:/app/watched_data:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: [CMD, python, -c, "import http.client,json; c=http.client.HTTPConnection('localhost',8000,timeout=10); c.request('GET','/health'); r=c.getresponse(); assert r.status in (200,503) and json.loads(r.read()).get('api')=='ready'"]
+      interval: 15s
+      timeout: 12s
+      retries: 3
+    depends_on:
+      timescaledb:
+        condition: service_started
+      mongodb:
+        condition: service_started
+
+  dashboard:
+    <<: *app
+    command: [streamlit, run, app/dashboard/main.py, --server.address, 0.0.0.0, --server.port, "8501"]
+    environment:
+      API_BASE_URL: http://api:8000
+      API_TIMEOUT_SECONDS: 30
+      HOME: /tmp
+    ports:
+      - "127.0.0.1:8501:8501"
+    healthcheck:
+      test: [CMD, python, -c, "import http.client; c=http.client.HTTPConnection('localhost',8501,timeout=3); c.request('GET','/_stcore/health'); assert c.getresponse().status==200"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      api:
         condition: service_started
 
 volumes:

@@ -1,5 +1,13 @@
 .git
 .agents
+docs
+.codex
+.claude
+.idea
+.vscode
+AGENTS.md
+CLAUDE.md
+Makefile
 .env
 .env.*
 .venv

@@ -3,8 +3,8 @@
 > Metadata-only filesystem monitoring and analytics using Python, Watchdog, UDP,
 > TimescaleDB, MongoDB, and Pandas.
 
-Phase 1 delivers the data pipeline and static analysis. API, dashboard, and anomaly
-analysis are deliberately deferred to later phases.
+FilePulse combines a best-effort event pipeline, bounded time-series API, and a
+Streamlit/Plotly dashboard. Statistical anomaly detection is not implemented.
 
 ## Quick start
 
@@ -20,8 +20,10 @@ docker compose up --build -d
 docker compose ps
 ```
 
-The four services are `timescaledb`, `mongodb`, `collector`, and `monitor`.
-No host ports are published. The Python containers run as a non-root user with
+The six services are `timescaledb`, `mongodb`, `collector`, `monitor`, `api`, and
+`dashboard`. Open the dashboard at http://localhost:8501 and API documentation at
+http://localhost:8000/docs. These two ports bind to localhost only; database and
+UDP ports remain internal. The Python containers run as a non-root user with
 read-only filesystems and a temporary `/tmp`. Database data lives in named volumes.
 The initial SQL runs on a fresh PostgreSQL volume; restarting does not reapply it.
 
@@ -76,8 +78,69 @@ docker compose run --rm collector pytest -m integration -p no:cacheprovider
 
 Integration tests require the running stack. They verify real inserts, idempotent
 replays, hypertable/index structure, a bounded `time_bucket()` query, and malformed
-UDP followed by a valid event through the running collector. See
-[Phase 1 handoff](docs/phase-1-handoff.md) for actual results and database-outage checks.
+UDP followed by a valid event through the running collector. API tests cover safe
+failures, validation, scan concurrency and caching. Query integration tests verify
+real bounded buckets, gaps, coverage, rates, and deterministic pagination.
+
+## Dashboard and API
+
+Overview, Live Activity, File Analysis, and System expose real data; Anomalies is
+an explicit placeholder. Live Activity polls every ten seconds while viewing the
+newest page. Browsing older pages pauses automatic updates.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /health` | Independent dependency health and scan-cache state |
+| `GET /api/v1/overview` | Static metrics and bounded activity summary |
+| `GET /api/v1/activity/timeseries` | UTC gap-filled event buckets |
+| `GET /api/v1/events` | Canonical events, newest first |
+| `GET /api/v1/files/summary` | Metadata statistics and bounded top-file tables |
+| `GET /api/v1/files/extensions` | Scanned extension counts and bytes |
+| `POST /api/v1/files/scan` | Explicit refresh, with an empty JSON object |
+
+Activity routes accept `window=1h|6h|24h|7d` (default `24h`) and optional
+`event_type=created|modified|deleted|moved`. Timeseries also accepts
+`bucket=1m|5m|15m|1h` (default `15m`). Query bounds are `[start,end)` in UTC;
+edge buckets represent only the portion within these bounds. Events support
+`limit` (1–200, default 50) and `offset` (0–10000). Fetching one extra row determines
+`has_more`. Ordering is `timestamp DESC, event_id DESC`; new arrivals can shift
+offset pages. No unbounded history endpoint is provided.
+
+Activity counts include files and directories. Unique File Paths and extension
+rankings exclude directories; path count does not imply inode identity. Bytes
+Changed sums absolute known file size deltas, never estimates missing values.
+Coverage counts file modifications plus moves with a measured nonzero size delta.
+Creates, deletes, directories, and pure moves are not coverage-eligible. No eligible
+events means zero changed bytes; eligible events without any measurement mean null.
+The UI displays measurement coverage alongside changed bytes. Events/min means the
+last 60 seconds; Events Today means **Today (UTC)**. Both respect the event filter.
+
+The API owns a single process-local scan cache and runs one worker. The first
+static-data request, including Overview, performs one metadata-only scan protected
+by a concurrency lock. Later requests reuse it until explicit Scan. Successful
+Scan immediately clears/refetches all static-dependent dashboard caches, including
+Overview. Failed refresh preserves the last successful result as stale; initial
+failure requires explicit retry. Health never scans. Restarting the API discards
+the snapshot. Dashboard caches last ten seconds for activity and up to 45 seconds
+for static responses, but expiration does not cause another filesystem scan.
+
+Health checks inspect both databases independently. MongoDB failure does not block
+TimescaleDB analytics, and static scans can work during either database outage.
+Collector and monitor liveness is not measured: recent persisted events are not
+proof of process health. Health responses never expose credentials or connection
+strings. The dashboard only uses the API, without DB credentials or filesystem mounts.
+
+```mermaid
+flowchart LR
+  Files[Watched directory] --> Monitor[Watchdog monitor]
+  Monitor -->|UDP| Collector
+  Collector --> TimescaleDB
+  Collector --> MongoDB
+  TimescaleDB --> API[FastAPI queries]
+  MongoDB -->|health only| API
+  Files -->|read-only metadata scan| API
+  API --> Dashboard[Streamlit / Plotly]
+```
 
 ## Design decisions and limitations
 
@@ -99,5 +162,4 @@ UDP followed by a valid event through the running collector. See
 - This local project has no authentication or distributed monitoring. The isolated
   Compose network is not protection against a hostile container on the same network.
 
-See [architecture](docs/architecture.md) for the event contract and boundaries.
 Stop services with `docker compose down`; named volumes are retained.
