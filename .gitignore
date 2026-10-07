@@ -1,0 +1,55 @@
+# Local development documentation, tools, and helper files
+.agents/
+docs/
+.codex/
+.claude/
+AGENTS.md
+CLAUDE.md
+/Makefile
+
+# Credentials and local environment
+.env
+.env.*
+!.env.example
+.envrc
+secrets/
+*.pem
+*.key
+
+# Generated filesystem activity and database state
+watched_data/*
+!watched_data/.gitkeep
+data/
+volumes/
+generated/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python build, runtime, test, and coverage artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+.tox/
+.nox/
+.python-version
+.python_history
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.egg-info/
+build/
+dist/
+*.log
+
+# IDE and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

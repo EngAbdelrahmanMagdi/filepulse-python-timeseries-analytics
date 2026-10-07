@@ -1,0 +1,27 @@
+# Tested Python 3.12 Linux dependency snapshot; direct requirements are in pyproject.toml.
+setuptools==80.9.0
+annotated-types==0.8.0
+dnspython==2.8.0
+iniconfig==2.3.1
+numpy==2.5.3
+packaging==26.3
+pandas==2.3.3
+pluggy==1.6.0
+psycopg==3.2.10
+psycopg-binary==3.2.10
+psycopg-pool==3.3.3
+pydantic==2.12.3
+pydantic-settings==2.11.0
+pydantic_core==2.41.4
+Pygments==2.21.0
+pymongo==4.15.3
+pytest==8.4.2
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.4
+pytz==2026.5
+ruff==0.14.1
+six==1.17.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzdata==2026.5
+watchdog==6.0.0

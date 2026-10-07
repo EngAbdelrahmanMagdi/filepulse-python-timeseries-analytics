@@ -1,0 +1,85 @@
+name: filepulse
+x-app: &app
+  image: filepulse:phase1
+  build: .
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.21.3-pg17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-filepulse}
+      POSTGRES_USER: ${POSTGRES_USER:-filepulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mongodb:
+    image: mongo:8.0.12
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: filepulse
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?Set MONGO_PASSWORD in .env}
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: [CMD-SHELL, 'mongosh --quiet --eval "quit(db.adminCommand({ping:1}).ok ? 0 : 1)"']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  collector:
+    <<: *app
+    command: [python, -m, app.collector.server]
+    environment:
+      WATCH_ROOT: /app/watched_data
+      UDP_HOST: 0.0.0.0
+      UDP_PORT: ${UDP_PORT:-9999}
+      UDP_MAX_PAYLOAD: ${UDP_MAX_PAYLOAD:-8192}
+      POSTGRES_HOST: timescaledb
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-filepulse}
+      POSTGRES_USER: ${POSTGRES_USER:-filepulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      MONGO_URI: mongodb://filepulse:${MONGO_PASSWORD:?Set MONGO_PASSWORD in .env}@mongodb:27017/?authSource=admin
+      MONGO_DATABASE: ${MONGO_DATABASE:-filepulse}
+      DB_TIMEOUT_SECONDS: ${DB_TIMEOUT_SECONDS:-3}
+    volumes:
+      - ./watched_data:/app/watched_data:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+
+  monitor:
+    <<: *app
+    command: [python, -m, app.monitoring.watcher]
+    environment:
+      WATCH_ROOT: /app/watched_data
+      UDP_HOST: collector
+      UDP_PORT: ${UDP_PORT:-9999}
+      UDP_MAX_PAYLOAD: ${UDP_MAX_PAYLOAD:-8192}
+      OBSERVER_MODE: ${OBSERVER_MODE:-polling}
+      POLL_INTERVAL: ${POLL_INTERVAL:-1}
+    volumes:
+      - ./watched_data:/app/watched_data:ro
+    depends_on:
+      collector:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  mongo_data:

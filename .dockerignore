@@ -1,0 +1,14 @@
+.git
+.agents
+.env
+.env.*
+.venv
+__pycache__
+**/__pycache__
+.pytest_cache
+.ruff_cache
+watched_data
+secrets
+data
+volumes
+*.log
