@@ -136,3 +136,33 @@ def activity_chart(buckets: list[dict]) -> go.Figure:
     figure.update_xaxes(tickformat="%d %b\n%H:%M", title="Time (UTC)")
     figure.update_yaxes(title="Events · files and directories")
     return theme(figure)
+
+
+def anomaly_chart(buckets: list[dict]) -> go.Figure:
+    figure = go.Figure(
+        go.Scatter(
+            x=[row["timestamp"] for row in buckets],
+            y=[row["anomaly_score"] for row in buckets],
+            name="Anomaly score",
+            mode="lines+markers",
+            connectgaps=False,
+            line={"color": TOKENS["accent"], "width": 2},
+            marker={"size": 4},
+            hovertemplate="%{x|%d %b %H:%M} UTC<br>Score: %{y:.3f}<extra></extra>",
+        )
+    )
+    flagged = [row for row in buckets if row["flagged"]]
+    figure.add_trace(
+        go.Scatter(
+            x=[row["timestamp"] for row in flagged],
+            y=[row["anomaly_score"] for row in flagged],
+            name="Flagged",
+            mode="markers",
+            marker={"color": EVENT_COLORS["deleted"], "size": 9},
+            hovertemplate="%{x|%d %b %H:%M} UTC<br>Flagged score: %{y:.3f}<extra></extra>",
+        )
+    )
+    figure.add_hline(y=0, line_dash="dot", line_color=TOKENS["muted"])
+    figure.update_xaxes(title="Complete minute (UTC)", tickformat="%d %b\n%H:%M")
+    figure.update_yaxes(title="Anomaly score · positive means flagged")
+    return theme(figure)

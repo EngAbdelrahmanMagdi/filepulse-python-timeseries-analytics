@@ -23,6 +23,10 @@ jsonschema-specifications==2025.9.1
 MarkupSafe==3.0.4
 narwhals==2.26.0
 numpy==2.5.3
+scikit-learn==1.7.2
+scipy==1.16.3
+joblib==1.5.2
+threadpoolctl==3.6.0
 packaging==25.0
 pandas==2.3.3
 pillow==12.3.0

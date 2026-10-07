@@ -1,6 +1,7 @@
 .git
 .agents
 docs
+assets/screenshots
 .codex
 .claude
 .idea

@@ -114,6 +114,7 @@ services:
     environment:
       API_BASE_URL: http://api:8000
       API_TIMEOUT_SECONDS: 30
+      SCAN_TIMEOUT_SECONDS: 90
       HOME: /tmp
     ports:
       - "127.0.0.1:8501:8501"

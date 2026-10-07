@@ -3,14 +3,22 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from psycopg import Error as PostgresError
 from psycopg_pool import PoolTimeout
 
+from app.analytics.anomalies import AnomalyService
 from app.analytics.queries import EventQueries, bounds
 from app.analytics.scan_cache import ScanCache
+from app.api.anomaly_schemas import (
+    AnomaliesResponse,
+    AnomalyDetail,
+    AnomalyQuery,
+    DetailQuery,
+    ModelStatus,
+)
 from app.api.schemas import (
     ActivityQuery,
     EventsQuery,
@@ -41,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         mongo = MongoStore(config)
         application.state.settings = config
         application.state.queries = EventQueries(postgres)
+        application.state.anomalies = AnomalyService(application.state.queries)
         application.state.mongo = mongo
         application.state.scans = ScanCache(RootPaths(config.watch_root))
         logger.info("api_started")
@@ -50,7 +59,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             postgres.close()
             mongo.close()
 
-    application = FastAPI(title="FilePulse", version="0.2.0", lifespan=lifespan)
+    application = FastAPI(title="FilePulse", version="0.3.0", lifespan=lifespan)
 
     @application.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, exc: RequestValidationError):
@@ -114,6 +123,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/api/v1/activity/timeseries", response_model=SeriesResponse)
     def timeseries(request: Request, query: Annotated[SeriesQuery, Query()]):
         return request.app.state.queries.timeseries(query)
+
+    @application.get("/api/v1/anomalies/model", response_model=ModelStatus)
+    def model_status(request: Request):
+        return request.app.state.anomalies.status()
+
+    @application.post("/api/v1/anomalies/train", response_model=ModelStatus)
+    def train_model(request: Request, body: ScanRequest):
+        result = request.app.state.anomalies.train()
+        code = {"ready": 200, "busy": 409, "insufficient_data": 422, "failed": 503}
+        return JSONResponse(
+            status_code=code[result.last_attempt], content=result.model_dump(mode="json")
+        )
+
+    @application.get("/api/v1/anomalies", response_model=AnomaliesResponse)
+    def anomalies(request: Request, query: Annotated[AnomalyQuery, Query()]):
+        return request.app.state.anomalies.list(query)
+
+    @application.get("/api/v1/anomalies/detail", response_model=AnomalyDetail)
+    def anomaly_detail(request: Request, query: Annotated[DetailQuery, Query()]):
+        result = request.app.state.anomalies.detail(query.timestamp)
+        if result is None:
+            raise HTTPException(
+                404, "No model or complete bucket available in the last seven days."
+            )
+        return result
 
     @application.get("/api/v1/events", response_model=EventsResponse)
     def events(request: Request, query: Annotated[EventsQuery, Query()]):

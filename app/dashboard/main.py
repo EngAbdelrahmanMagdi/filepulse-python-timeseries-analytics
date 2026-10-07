@@ -3,10 +3,11 @@ from datetime import UTC, datetime
 import pandas as pd
 import streamlit as st
 
-from app.dashboard.client import live_data, refresh_scan, static_data
+from app.dashboard.client import live_data, refresh_scan, static_data, train_model
 from app.dashboard.visuals import (
     EVENT_COLORS,
     activity_chart,
+    anomaly_chart,
     bars,
     byte_label,
     coverage,
@@ -345,13 +346,161 @@ def file_analysis() -> None:
 
 
 def anomalies() -> None:
-    header("Anomalies", "A dedicated workspace for future statistical analysis.")
-    with st.container(border=True):
-        st.subheader("Detection is not enabled")
-        st.write(
-            "Activity and file analytics are available today. Statistical detection is not "
-            "implemented, so this workspace does not display scores or findings."
+    header("Anomalies", "Unusual activity, measured against your historical baseline.", live=True)
+    window = st.selectbox("Anomaly window", ["1h", "6h", "24h", "7d"], index=2)
+    if st.session_state.get("anomaly_window") != window:
+        st.session_state["anomaly_offset"] = 0
+        st.session_state["anomaly_window"] = window
+    if st.button("Train / Retrain model", icon=":material/model_training:", type="primary"):
+        with st.spinner("Training on complete historical minutes…"):
+            trained = train_model()
+        if trained.get("last_attempt") == "ready":
+            st.success(f"Model trained · {trained['sample_count']} active minutes")
+            st.session_state["anomaly_offset"] = 0
+        else:
+            st.warning(trained.get("message") or trained.get("error") or "Training is busy.")
+    offset = st.session_state.get("anomaly_offset", 0)
+
+    @st.fragment(run_every=None if offset else "10s")
+    def findings():
+        status = get_data("/api/v1/anomalies/model")
+        if not status:
+            return
+        st.caption(f"Model: {status['state'].replace('_', ' ')} · explicit training · memory only")
+        if status.get("message"):
+            st.warning(status["message"])
+        if status["state"] != "ready":
+            st.info(
+                "Collect at least 30 active complete minutes spanning 30 minutes, with "
+                "three activity patterns, then use Train. Existing history is reused."
+            )
+            return
+        st.caption(
+            f"Training cutoff: {status['training_cutoff']} · "
+            f"{status['sample_count']} baseline minutes · excludes the open minute"
         )
+        result = get_data(
+            "/api/v1/anomalies",
+            (
+                ("window", window),
+                ("limit", 50),
+                ("offset", offset),
+            ),
+        )
+        if not result:
+            return
+        for col, value in zip(
+            st.columns(3),
+            [
+                ("Flagged Minutes", str(result["flagged_count"]), "Selected window · model output"),
+                ("Scored Minutes", str(result["scored_count"]), "Active, complete, after training"),
+                (
+                    "Latest Flagged",
+                    pd.to_datetime(result["latest_flagged"], utc=True).strftime("%H:%M UTC")
+                    if result["latest_flagged"] else "None",
+                    "UTC · not a security alert",
+                ),
+            ],
+            strict=True,
+        ):
+            with col:
+                metric(*value)
+        with st.container(border=True):
+            st.subheader("Anomaly timeline")
+            if result["scored_count"]:
+                chart(anomaly_chart(result["timeline"]), "anomaly_timeline")
+            else:
+                st.info(
+                    "No active complete minutes after training yet. Generate activity "
+                    "and wait for the minute to finish."
+                )
+            st.caption(
+                "Positive score = flagged. Not a probability or severity. "
+                "Idle and pre-training minutes are unscored."
+            )
+        with st.container(border=True):
+            st.subheader("Flagged periods")
+            rows = result["anomalies"]
+            table(
+                [
+                    {
+                        k: row[k]
+                        for k in (
+                            "timestamp",
+                            "anomaly_score",
+                            "total",
+                            "deleted",
+                            "unique_files",
+                            "bytes_changed",
+                        )
+                    }
+                    for row in rows
+                ],
+                "anomaly_records",
+            )
+            previous, following, _ = st.columns([1, 1, 4])
+            if previous.button("Previous findings", disabled=offset == 0):
+                st.session_state["anomaly_offset"] = max(0, offset - 50)
+                st.rerun()
+            if following.button(
+                "Next findings", disabled=not result["has_more"] or offset >= 10000
+            ):
+                st.session_state["anomaly_offset"] = offset + 50
+                st.rerun()
+            if rows:
+                selected = st.selectbox(
+                    "Inspect complete minute", [row["timestamp"] for row in rows]
+                )
+                detail = get_data("/api/v1/anomalies/detail", (("timestamp", selected),))
+                if detail:
+                    st.subheader("Observed context")
+                    st.caption(
+                        "Raw metrics versus baseline. These comparisons are not "
+                        "model feature attribution."
+                    )
+                    context = detail["bucket"]["observed_context"]
+                    for item in context:
+                        label = item["feature"].replace("_", " ").title()
+                        st.write(
+                            f"{label}: {item['observed']:,} versus baseline p95 "
+                            f"of {item['p95']:,.1f}"
+                        )
+                    if not context:
+                        st.info(
+                            "No individual metric exceeds baseline p95; "
+                            "the model evaluates combinations of metrics."
+                        )
+                    st.caption(
+                        f"Known bytes changed: {byte_label(detail['bucket']['bytes_changed'])}"
+                        f" · {coverage(detail['bucket'])}"
+                    )
+                    table(detail["comparisons"], "baseline_comparisons")
+                    with st.expander("Surrounding complete minutes"):
+                        table(
+                            [
+                                {
+                                    k: r[k]
+                                    for k in (
+                                        "timestamp",
+                                        "total",
+                                        "created",
+                                        "modified",
+                                        "deleted",
+                                        "moved",
+                                        "bytes_changed",
+                                    )
+                                }
+                                for r in detail["surrounding"]
+                            ],
+                            "anomaly_surrounding",
+                        )
+        st.caption(
+            "Automatic updates paused on older pages."
+            if offset
+            else f"Last refresh attempt: {datetime.now(UTC):%H:%M:%S} UTC"
+        )
+
+    findings()
 
 
 def system() -> None:

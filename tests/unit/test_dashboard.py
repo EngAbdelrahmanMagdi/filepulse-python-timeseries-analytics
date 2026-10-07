@@ -70,8 +70,8 @@ def test_pages_render_without_raw_errors_when_api_unavailable(page):
         patch.object(client, "static_data", return_value=error),
     ):
         app = AppTest.from_string(
-            f"from app.dashboard.main import {page}\n{page}()", default_timeout=15
+            f"import importlib\nimport app.dashboard.main as page\n"
+            f"importlib.reload(page)\npage.{page}()", default_timeout=15
         ).run()
     assert not app.exception
-    if page != "anomalies":
-        assert app.warning
+    assert app.warning
